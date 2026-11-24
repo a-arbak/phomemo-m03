@@ -2,6 +2,10 @@
 
 Print to a **Phomemo M03** thermal printer (80 mm, 203 dpi) from a computer over **Bluetooth LE**, with no vendor app and no driver.
 
+<p align="center"><img src="docs/print.jpg" width="560" alt="Phomemo M03 printing a test receipt sent from phomemo_m03.py"></p>
+
+<p align="center"><sub>Printed with <code>python phomemo_m03.py text "Phomemo M03" "Printed over Bluetooth LE" "no app, no driver" "github.com/a-arbak/phomemo-m03" --size 34</code></sub></p>
+
 The repository contains:
 - **`phomemo_m03.py`**, a small Python command-line tool for text, images, paper feed, status and raw commands.
 - **`web/index.html`**, a single-file Web Bluetooth console for Chrome and Edge.
@@ -24,7 +28,7 @@ python phomemo_m03.py raw "1f1107"                        # send raw hex
 
 The tool finds the printer by its advertised name (`M03`). Use `--address` to pick one explicitly, and `-v` to see every byte sent and received.
 
-Requires Python 3.10+ with [bleak](https://github.com/hbldh/bleak) and [Pillow](https://python-pillow.org). Tested on Windows 11. Linux and macOS should work wherever bleak does.
+Requires Python 3.10+ with [bleak](https://github.com/hbldh/bleak) and [Pillow](https://python-pillow.org). Tested on Windows 11 (photo above). Linux and macOS should work wherever bleak does.
 
 ## Quick start (browser)
 
