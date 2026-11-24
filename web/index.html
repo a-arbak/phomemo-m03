@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phomemo M03 Web Console</title>
+<style>
+:root{color-scheme:light dark;--bg:light-dark(#f4f4f2,#141414);--card:light-dark(#fff,#1e1e1e);--ink:light-dark(#151515,#ececec);--mut:light-dark(#666,#9a9a9a);--red:#d6382f;--line:light-dark(#ddd,#333)}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+header{padding:20px max(4vw,16px);display:flex;gap:16px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+h1{font-size:28px;margin:0;line-height:1.1}
+#st{font-size:14px;color:var(--mut)}#st.on{color:#1a8a4a}
+main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,420px);gap:20px;padding:20px max(4vw,16px);max-width:1240px}
+@media(max-width:800px){main{grid-template-columns:minmax(0,1fr)}}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+h2{font-size:17px;margin:0 0 10px}
+button{font:inherit;min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+button.p{background:var(--red);border-color:var(--red);color:#fff}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+input,select,textarea{font-size:16px;font-family:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+textarea{width:100%;min-height:90px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0}
+label{font-size:14px;color:var(--mut)}
+#log{font:12px/1.45 "IBM Plex Mono",ui-monospace,monospace;height:240px;overflow:auto;white-space:pre-wrap;background:var(--bg);padding:8px;border-radius:8px}
+.paper{background:#fff;padding:14px 10px;border-radius:4px;box-shadow:0 2px 10px #0003;display:flex;justify-content:center}
+.paper canvas{width:100%;image-rendering:pixelated;max-height:70vh;object-fit:contain;object-position:top}
+#svc{font-size:13px}#svc div{padding:2px 0}#svc b{font-weight:600}
+small{color:var(--mut)}
+</style></head><body>
+<header><h1>Phomemo M03 · BLE</h1><button class="p" id="bc">Connect</button><button id="bd" disabled>Disconnect</button><span id="st">Not connected</span></header>
+<main>
+<div>
+<section><h2>Settings</h2>
+<div class="row"><label for="w">Head width</label>
+<select id="w"><option value="576">576 dots (80 mm)</option><option value="432">432 dots (53 mm)</option><option value="384">384 dots</option></select>
+<label for="ch">Packet</label><input id="ch" type="number" value="180" min="20" max="512" style="width:90px">
+<label for="dl">Delay ms</label><input id="dl" type="number" value="20" min="0" max="200" style="width:80px"></div>
+<div class="row"><label for="hd">Header (hex)</label><input id="hd" style="flex:1" value="1b40 1f110204 1f113796 1f110b 1f113500 1f118803"></div>
+<div class="row"><label for="ft">Footer (hex)</label><input id="ft" style="flex:1" value="1b6402 1b6402 1b6402 1b6402"></div>
+<small>Each space-separated group is sent as its own packet. M03 job: ESC @ → 1F11 02 density → 1F11 37 96 → 1F11 0B → 1F11 35 00 → 1F11 88 03 → GS v 0 (72 bytes/row) → ESC d 2. If the printer stops responding, power-cycle it.</small>
+</section>
+<section><h2>Text</h2>
+<textarea id="tx">Hello M03!
+Printed from a browser
+over Bluetooth LE</textarea>
+<div class="row"><label for="fs">Size</label><input id="fs" type="number" value="36" min="12" max="160" style="width:80px">
+<label><input type="checkbox" id="bo" checked> Bold</label>
+<button id="bt">Preview</button></div>
+</section>
+<section><h2>Image</h2>
+<div class="row"><input type="file" id="im" accept="image/*"><label for="th">Threshold</label><input id="th" type="range" min="40" max="220" value="128"><label><input type="checkbox" id="di" checked> Dithering</label></div>
+</section>
+<section><h2>Raw command</h2>
+<div class="row"><input id="raw" style="flex:1" placeholder="e.g. 1f1107 (firmware query)"><button id="br" disabled>Send</button></div>
+<div class="row"><button id="bf" disabled>Feed paper</button></div>
+</section>
+<section><h2>Discovered services</h2><div id="svc"><small>Listed after connecting.</small></div></section>
+</div>
+<div>
+<section><h2>Preview</h2><div class="paper"><canvas id="cv" width="576" height="100"></canvas></div>
+<div class="row"><button class="p" id="bp" disabled>Print</button><span id="pg"></span></div></section>
+<section><h2>Log</h2><div id="log"></div></section>
+</div>
+</main>
+<script>
+{
+const $=id=>document.getElementById(id);
+const SVCS=[0xff00,0xae30,0x18f0,0xffe0,0xfee7,'49535343-fe7d-4ae5-8fa9-9fafd205e455','e7810a71-73ae-499d-8c15-faa9aef0c3f2','0000ae30-0000-1000-8000-00805f9b34fb'];
+let dev=null,wch=null,bits=null;
+const log=(m)=>{const l=$('log');l.textContent+=new Date().toLocaleTimeString()+'  '+m+'\n';l.scrollTop=l.scrollHeight};
+const hex=b=>[...b].map(x=>x.toString(16).padStart(2,'0')).join(' ');
+const parseHex=s=>{s=s.replace(/[^0-9a-f]/gi,'');if(s.length%2)throw Error('Odd number of hex digits');return new Uint8Array(s.match(/../g)?.map(h=>parseInt(h,16))||[])};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const setOn=on=>{$('st').textContent=on?'Connected: '+(dev.name||dev.id):'Not connected';$('st').className=on?'on':'';for(const b of['bd','br','bf','bp'])$(b).disabled=!on;$('bc').disabled=on};
+
+async function connect(){
+  if(!navigator.bluetooth){log('Web Bluetooth is not available. Use Chrome or Edge, from localhost or HTTPS.');return}
+  try{
+    dev=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:SVCS});
+    dev.addEventListener('gattserverdisconnected',()=>{log('Disconnected');wch=null;setOn(false)});
+    log('Selected: '+(dev.name||'(unnamed)'));
+    const srv=await dev.gatt.connect();
+    const list=await srv.getPrimaryServices();let html='';
+    for(const s of list){
+      html+='<div><b>'+s.uuid+'</b></div>';
+      let cs=[];try{cs=await s.getCharacteristics()}catch(e){}
+      for(const c of cs){
+        const p=c.properties,f=['read','write','writeWithoutResponse','notify','indicate'].filter(k=>p[k]).join(',');
+        html+='<div>&nbsp;&nbsp;'+c.uuid+' <small>['+f+']</small></div>';
+        log('  '+s.uuid.slice(4,8)+' / '+c.uuid.slice(4,8)+' ['+f+']');
+        if(p.notify||p.indicate){try{await c.startNotifications();c.addEventListener('characteristicvaluechanged',e=>log('← '+c.uuid.slice(4,8)+': '+hex(new Uint8Array(e.target.value.buffer))))}catch(e){}}
+        const pref=c.uuid.startsWith('0000ff02');
+        if((p.writeWithoutResponse||p.write)&&(!wch||pref))wch=c;
+      }
+    }
+    $('svc').innerHTML=html||'<small>No services found.</small>';
+    if(!wch){log('No writable characteristic found.');return}
+    log('Write characteristic: '+wch.uuid);setOn(true);
+  }catch(e){log('Error: '+e.message)}
+}
+async function send(data,prog){
+  const n=Math.max(20,+$('ch').value||128),d=+$('dl').value||0;
+  for(let i=0;i<data.length;i+=n){
+    const part=data.slice(i,i+n);
+    if(wch.properties.writeWithoutResponse)await wch.writeValueWithoutResponse(part);else await wch.writeValue(part);
+    if(d)await sleep(d);
+    if(prog)$('pg').textContent=Math.round(100*Math.min(1,(i+n)/data.length))+'%';
+  }
+}
+function raster(){
+  const cv=$('cv'),W=cv.width,H=cv.height,bw=W/8;
+  const px=cv.getContext('2d').getImageData(0,0,W,H).data,out=new Uint8Array(bw*H);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(px[(y*W+x)*4]<128)out[y*bw+(x>>3)]|=0x80>>(x&7);
+  return{bw,H,out};
+}
+function job(){
+  const {bw,H,out}=raster(),parts=[parseHex($('hd').value)];
+  parts.push(new Uint8Array([0x1d,0x76,0x30,0x00,bw&255,bw>>8,H&255,H>>8]),out);
+  parts.push(parseHex($('ft').value));
+  const len=parts.reduce((a,p)=>a+p.length,0),all=new Uint8Array(len);let o=0;for(const p of parts){all.set(p,o);o+=p.length}
+  return all;
+}
+function drawText(){
+  const W=+$('w').value,fs=+$('fs').value,lines=$('tx').value.split('\n'),cv=$('cv');
+  const font=($('bo').checked?'700 ':'400 ')+fs+'px "IBM Plex Sans",Arial,sans-serif';
+  const ctx=cv.getContext('2d');ctx.font=font;
+  const wrapped=[];for(const ln of lines){let cur='';for(const w of ln.split(' ')){const t=cur?cur+' '+w:w;if(ctx.measureText(t).width>W-8&&cur){wrapped.push(cur);cur=w}else cur=t}wrapped.push(cur)}
+  cv.width=W;cv.height=Math.ceil(wrapped.length*fs*1.25+16);
+  ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);ctx.fillStyle='#000';ctx.font=font;ctx.textBaseline='top';
+  wrapped.forEach((l,i)=>ctx.fillText(l,4,8+i*fs*1.25));
+  threshold(false,128);
+}
+function threshold(dither,t){
+  const cv=$('cv'),ctx=cv.getContext('2d'),W=cv.width,H=cv.height,im=ctx.getImageData(0,0,W,H),d=im.data,g=new Float32Array(W*H);
+  for(let i=0;i<W*H;i++)g[i]=0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2]+(255-d[i*4+3]);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=y*W+x,o=g[i],n=o<t?0:255,e=o-n;g[i]=n;
+    if(dither){if(x+1<W)g[i+1]+=e*7/16;if(y+1<H){if(x>0)g[i+W-1]+=e*3/16;g[i+W]+=e*5/16;if(x+1<W)g[i+W+1]+=e/16}}
+  }
+  for(let i=0;i<W*H;i++){d[i*4]=d[i*4+1]=d[i*4+2]=g[i];d[i*4+3]=255}
+  ctx.putImageData(im,0,0);
+}
+let img=null;
+function drawImg(){
+  if(!img)return;const W=+$('w').value,cv=$('cv');cv.width=W;cv.height=Math.round(img.height*W/img.width);
+  const ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,W,cv.height);ctx.drawImage(img,0,0,W,cv.height);
+  threshold($('di').checked,+$('th').value);
+}
+$('bc').onclick=connect;
+$('bd').onclick=()=>dev?.gatt?.disconnect();
+$('bt').onclick=()=>{img=null;drawText()};
+$('im').onchange=e=>{const f=e.target.files[0];if(!f)return;const i=new Image();i.onload=()=>{img=i;drawImg()};i.src=URL.createObjectURL(f)};
+$('th').oninput=$('di').onchange=drawImg;
+$('w').onchange=()=>img?drawImg():drawText();
+$('br').onclick=async()=>{try{for(const b of cmds($('raw').value)){log('→ '+hex(b));await send(b);await sleep(150)}}catch(e){log('Error: '+e.message)}};
+$('bf').onclick=async()=>{try{await send(new Uint8Array([0x1b,0x64,0x02]));log('→ 1b 64 02')}catch(e){log('Error: '+e.message)}};
+const cmds=v=>v.trim().split(/\s+/).filter(Boolean).map(parseHex);
+$('bp').onclick=async()=>{try{const {bw,H,out}=raster();log('Printing: '+$('cv').width+'×'+H+', '+out.length+' bytes');$('bp').disabled=true;
+for(const c of cmds($('hd').value)){log('→ '+hex(c));await send(c);await sleep(120)}
+const rh=new Uint8Array([0x1d,0x76,0x30,0x00,bw&255,bw>>8,H&255,H>>8]);log('→ '+hex(rh));await send(rh);
+await send(out,true);await sleep(300);
+for(const c of cmds($('ft').value)){log('→ '+hex(c));await send(c);await sleep(120)}
+log('Sent.')}catch(e){log('Error: '+e.message)}finally{$('bp').disabled=!wch}};
+window.m03={send,cmds,hex,parseHex,sleep,log,raster,drawText,setOn,get dev(){return dev},get wch(){return wch},set wch(v){wch=v},async reconnect(){const srv=await dev.gatt.connect();const sv=await srv.getPrimaryService(0xff00);wch=await sv.getCharacteristic(0xff02);const n=await sv.getCharacteristic(0xff03);await n.startNotifications();n.addEventListener('characteristicvaluechanged',e=>log('← ff03: '+hex(new Uint8Array(e.target.value.buffer))));setOn(true);return 'ok'}};
+drawText();
+log('Ready. Close the Phomemo app on your phone, turn the printer on, press Connect.');
+}
+</script>
+</body></html>
